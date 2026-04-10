@@ -214,6 +214,28 @@
     #refresh-btn.spinning { animation: spin 1s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    /* ── Toast ── */
+    #toast {
+      position: fixed;
+      bottom: 88px; left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: #1e293b;
+      border: 1px solid #475569;
+      color: #e2e8f0;
+      font-size: 13px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      white-space: nowrap;
+      max-width: 90vw;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      opacity: 0;
+      transition: opacity 0.2s, transform 0.2s;
+      z-index: 3000;
+      pointer-events: none;
+    }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
     /* ── Loading overlay ── */
     #loading {
       position: fixed; inset: 0;
@@ -359,6 +381,7 @@
 </div>
 
 <button id="refresh-btn" title="Uppdatera">↻</button>
+<div id="toast"></div>
 
 <!-- Bottom sheet -->
 <div id="panel">
@@ -387,6 +410,21 @@
   function setStatus(text, cls) {
     statusPill.textContent = text;
     statusPill.className = 'status-pill ' + cls;
+  }
+
+  let toastTimer;
+  function showToast(msg) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 5000);
+  }
+
+  function fetchWithTimeout(url, ms, opts) {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), ms);
+    return fetch(url, Object.assign({}, opts, { signal: ctrl.signal })).finally(() => clearTimeout(tid));
   }
 
   function fmt(val, unit = '', decimals = 0) {
@@ -459,33 +497,47 @@
   }
 
   /* ── Fetch flights ── */
+  const OPENSKY_BASE = 'https://opensky-network.org/api/states/all';
+  const CORS_PROXY   = 'https://corsproxy.io/?url=';
+
   async function fetchFlights() {
     if (!userPos) return;
     const { lat, lon } = userPos;
     const dLat = radiusKm / 111;
     const dLon = radiusKm / (111 * Math.cos(lat * Math.PI / 180));
-
-    const url = `https://opensky-network.org/api/states/all` +
-      `?lamin=${(lat - dLat).toFixed(4)}&lomin=${(lon - dLon).toFixed(4)}` +
-      `&lamax=${(lat + dLat).toFixed(4)}&lomax=${(lon + dLon).toFixed(4)}`;
+    const qs = `?lamin=${(lat - dLat).toFixed(4)}&lomin=${(lon - dLon).toFixed(4)}` +
+               `&lamax=${(lat + dLat).toFixed(4)}&lomax=${(lon + dLon).toFixed(4)}`;
 
     $('refresh-btn').classList.add('spinning');
     setStatus('Hämtar…', 'warn');
 
-    try {
-      const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      renderFlights(data.states || []);
-      const now = new Date().toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      $('updated').textContent = now;
-      setStatus('Live', 'ok');
-    } catch (e) {
-      console.error(e);
-      setStatus('Fel', 'error');
-    } finally {
-      $('refresh-btn').classList.remove('spinning');
+    let lastErr = '';
+    // Try direct first, then via CORS proxy
+    const attempts = [
+      OPENSKY_BASE + qs,
+      CORS_PROXY + encodeURIComponent(OPENSKY_BASE + qs),
+    ];
+
+    for (const url of attempts) {
+      try {
+        const resp = await fetchWithTimeout(url, 15000);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        renderFlights(data.states || []);
+        const now = new Date().toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        $('updated').textContent = now;
+        setStatus('Live', 'ok');
+        $('refresh-btn').classList.remove('spinning');
+        return;
+      } catch (e) {
+        lastErr = e.name === 'AbortError' ? 'Timeout' : (e.message || String(e));
+        console.warn('Attempt failed:', url, e);
+      }
     }
+
+    setStatus('Fel', 'error');
+    showToast('Fel: ' + lastErr + ' — tryck ↻ för att försöka igen');
+    $('refresh-btn').classList.remove('spinning');
   }
 
   /* ── Render flights on map ── */
@@ -638,7 +690,7 @@
   /* ── Manual form handlers ── */
   async function geocodeCity(query) {
     const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`;
-    const resp = await fetch(url, { headers: { 'Accept-Language': 'sv' }, signal: AbortSignal.timeout(8000) });
+    const resp = await fetchWithTimeout(url, 8000, { headers: { 'Accept-Language': 'sv' } });
     const data = await resp.json();
     if (!data.length) throw new Error('not found');
     return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), name: data[0].display_name };
