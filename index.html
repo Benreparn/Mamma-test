@@ -222,6 +222,7 @@
       align-items: center; justify-content: center;
       gap: 16px;
       z-index: 9999;
+      padding: 24px;
     }
     #loading .loader {
       width: 48px; height: 48px;
@@ -230,7 +231,71 @@
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
     }
-    #loading p { color: #94a3b8; font-size: 14px; text-align: center; padding: 0 32px; }
+    #loading p { color: #94a3b8; font-size: 14px; text-align: center; padding: 0 16px; }
+
+    /* ── Manual position form ── */
+    #manual-form {
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+      width: 100%;
+      max-width: 320px;
+    }
+    #manual-form h2 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #f1f5f9;
+      text-align: center;
+    }
+    #manual-form p {
+      font-size: 13px;
+      color: #64748b;
+      text-align: center;
+      padding: 0;
+    }
+    .form-row {
+      display: flex;
+      gap: 8px;
+    }
+    .form-input {
+      flex: 1;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      color: #e2e8f0;
+      font-size: 15px;
+      padding: 10px 12px;
+      outline: none;
+      width: 100%;
+    }
+    .form-input:focus { border-color: #3b82f6; }
+    .form-input::placeholder { color: #475569; }
+    .form-btn {
+      background: #3b82f6;
+      border: none;
+      border-radius: 10px;
+      color: white;
+      font-size: 15px;
+      font-weight: 600;
+      padding: 11px 16px;
+      cursor: pointer;
+      width: 100%;
+    }
+    .form-btn:active { opacity: 0.85; }
+    .form-btn.secondary {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #94a3b8;
+    }
+    .form-divider {
+      display: flex; align-items: center; gap: 8px;
+      color: #475569; font-size: 12px;
+    }
+    .form-divider::before, .form-divider::after {
+      content: ''; flex: 1;
+      height: 1px; background: #334155;
+    }
+    #geo-error { color: #f87171; font-size: 12px; text-align: center; display: none; }
 
     /* Plane SVG marker colors */
     .plane-marker { cursor: pointer; }
@@ -250,8 +315,30 @@
 <body>
 
 <div id="loading">
-  <div class="loader"></div>
+  <div class="loader" id="loading-spinner"></div>
   <p id="loading-msg">Hämtar din position via GPS…</p>
+
+  <!-- Shown when GPS fails or is blocked -->
+  <div id="manual-form">
+    <h2>✈ Flygradar</h2>
+    <p>GPS-åtkomst nekades eller ej tillgänglig.<br>Sök efter din stad eller ange koordinater.</p>
+
+    <input type="text" class="form-input" id="city-input"
+           placeholder="Stad, t.ex. Stockholm" autocomplete="off" />
+    <p id="geo-error">Hittade ingen plats, försök igen.</p>
+    <button class="form-btn" id="city-btn">Sök stad</button>
+
+    <div class="form-divider">eller koordinater</div>
+
+    <div class="form-row">
+      <input type="number" class="form-input" id="lat-input"
+             placeholder="Latitud" step="any" />
+      <input type="number" class="form-input" id="lon-input"
+             placeholder="Longitud" step="any" />
+    </div>
+    <button class="form-btn secondary" id="coords-btn">Använd koordinater</button>
+    <button class="form-btn secondary" id="retry-gps-btn">Försök GPS igen</button>
+  </div>
 </div>
 
 <header>
@@ -501,6 +588,7 @@
   }
 
   /* ── GPS ── */
+  let gpsWatching = false;
   function onGotPosition(pos) {
     const lat = pos.coords.latitude;
     const lon = pos.coords.longitude;
@@ -517,34 +605,101 @@
 
     fetchFlights();
     resetAutoRefresh();
+
+    if (!gpsWatching) {
+      gpsWatching = true;
+      navigator.geolocation.watchPosition(p => {
+        userPos = { lat: p.coords.latitude, lon: p.coords.longitude };
+        if (userMarker) userMarker.setLatLng([userPos.lat, userPos.lon]);
+        if (radiusCircle) radiusCircle.setLatLng([userPos.lat, userPos.lon]);
+      }, () => {}, { enableHighAccuracy: true });
+    }
+  }
+
+  function showManualForm(msg) {
+    $('loading-spinner').style.display = 'none';
+    $('loading-msg').style.display = 'none';
+    $('manual-form').style.display = 'flex';
+    setStatus('Ingen GPS', 'error');
   }
 
   function onGeoError(err) {
-    $('loading-msg').textContent = 'Kunde inte hämta GPS-position. Kontrollera att platsbehörighet är tillåten i webbläsaren.';
-    setStatus('Ingen GPS', 'error');
-    console.error(err);
+    showManualForm();
+  }
+
+  function startWithPosition(lat, lon) {
+    userPos = { lat, lon };
+    $('loading').style.display = 'none';
+    if (!map) initMap(lat, lon);
+    fetchFlights();
+    resetAutoRefresh();
+  }
+
+  /* ── Manual form handlers ── */
+  async function geocodeCity(query) {
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`;
+    const resp = await fetch(url, { headers: { 'Accept-Language': 'sv' }, signal: AbortSignal.timeout(8000) });
+    const data = await resp.json();
+    if (!data.length) throw new Error('not found');
+    return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), name: data[0].display_name };
+  }
+
+  $('city-btn').addEventListener('click', async () => {
+    const q = $('city-input').value.trim();
+    if (!q) return;
+    $('city-btn').textContent = 'Söker…';
+    $('city-btn').disabled = true;
+    $('geo-error').style.display = 'none';
+    try {
+      const { lat, lon, name } = await geocodeCity(q);
+      startWithPosition(lat, lon);
+    } catch {
+      $('geo-error').style.display = 'block';
+    } finally {
+      $('city-btn').textContent = 'Sök stad';
+      $('city-btn').disabled = false;
+    }
+  });
+
+  $('city-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') $('city-btn').click();
+  });
+
+  $('coords-btn').addEventListener('click', () => {
+    const lat = parseFloat($('lat-input').value);
+    const lon = parseFloat($('lon-input').value);
+    if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+      $('geo-error').textContent = 'Ogiltiga koordinater.';
+      $('geo-error').style.display = 'block';
+      return;
+    }
+    $('geo-error').style.display = 'none';
+    startWithPosition(lat, lon);
+  });
+
+  $('retry-gps-btn').addEventListener('click', () => {
+    $('manual-form').style.display = 'none';
+    $('loading-spinner').style.display = 'block';
+    $('loading-msg').style.display = 'block';
+    $('loading-msg').textContent = 'Försöker hämta GPS…';
+    $('geo-error').style.display = 'none';
+    tryGPS();
+  });
+
+  function tryGPS() {
+    if (!navigator.geolocation) {
+      showManualForm();
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(onGotPosition, onGeoError, {
+      enableHighAccuracy: true,
+      timeout: 12000,
+      maximumAge: 60000,
+    });
   }
 
   // Start
-  if (!navigator.geolocation) {
-    $('loading-msg').textContent = 'Din webbläsare stöder inte geolokalisering.';
-  } else {
-    $('loading-msg').textContent = 'Hämtar din position via GPS…';
-    navigator.geolocation.getCurrentPosition(onGotPosition, onGeoError, {
-      enableHighAccuracy: true,
-      timeout: 20000,
-      maximumAge: 60000,
-    });
-
-    // Watch position updates
-    navigator.geolocation.watchPosition(pos => {
-      const lat = pos.coords.latitude;
-      const lon = pos.coords.longitude;
-      userPos = { lat, lon };
-      if (userMarker) userMarker.setLatLng([lat, lon]);
-      if (radiusCircle) radiusCircle.setLatLng([lat, lon]);
-    }, () => {}, { enableHighAccuracy: true });
-  }
+  tryGPS();
 
 })();
 </script>
