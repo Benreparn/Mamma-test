@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>Flygradar</title>
+
+  <!-- Leaflet map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ── */
+    header {
+      background: #1e293b;
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #334155;
+      flex-shrink: 0;
+      z-index: 1000;
+    }
+    header h1 {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    header h1 span.icon { font-size: 22px; }
+
+    .status-pill {
+      font-size: 11px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .status-pill.ok    { background: #166534; color: #86efac; }
+    .status-pill.warn  { background: #713f12; color: #fde68a; }
+    .status-pill.error { background: #7f1d1d; color: #fca5a5; }
+
+    /* ── Map ── */
+    #map {
+      flex: 1;
+      width: 100%;
+      background: #0f172a;
+    }
+
+    /* Leaflet dark tiles attribution tweak */
+    .leaflet-control-attribution {
+      background: rgba(15,23,42,0.75) !important;
+      color: #94a3b8 !important;
+      font-size: 9px !important;
+    }
+    .leaflet-control-attribution a { color: #60a5fa !important; }
+
+    /* ── Info panel (bottom sheet) ── */
+    #panel {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      background: #1e293b;
+      border-top: 1px solid #334155;
+      border-radius: 16px 16px 0 0;
+      padding: 0 16px 24px;
+      transform: translateY(100%);
+      transition: transform 0.3s ease;
+      z-index: 2000;
+      max-height: 60dvh;
+      overflow-y: auto;
+    }
+    #panel.open { transform: translateY(0); }
+
+    #panel-handle {
+      width: 36px; height: 4px;
+      background: #475569;
+      border-radius: 2px;
+      margin: 10px auto 14px;
+    }
+    #panel-close {
+      position: absolute;
+      top: 14px; right: 16px;
+      background: #334155;
+      border: none;
+      color: #94a3b8;
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .panel-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: #f1f5f9;
+      margin-bottom: 14px;
+    }
+    .panel-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .panel-item {
+      background: #0f172a;
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+    .panel-item label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #64748b;
+      display: block;
+      margin-bottom: 2px;
+    }
+    .panel-item value {
+      font-size: 15px;
+      font-weight: 600;
+      color: #e2e8f0;
+    }
+
+    /* ── Stats bar ── */
+    #stats {
+      position: fixed;
+      top: 54px; left: 0; right: 0;
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      padding: 8px 12px;
+      pointer-events: none;
+      z-index: 900;
+    }
+    .stat-chip {
+      background: rgba(15,23,42,0.85);
+      backdrop-filter: blur(6px);
+      border: 1px solid #334155;
+      border-radius: 999px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #94a3b8;
+      white-space: nowrap;
+    }
+    .stat-chip b { color: #60a5fa; }
+
+    /* ── Radius control ── */
+    #radius-ctrl {
+      position: fixed;
+      top: 90px; right: 10px;
+      background: rgba(15,23,42,0.9);
+      backdrop-filter: blur(6px);
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 10px 12px;
+      z-index: 900;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      color: #64748b;
+    }
+    #radius-ctrl label { font-weight: 600; white-space: nowrap; }
+    #radiusSlider {
+      -webkit-appearance: none;
+      width: 80px;
+      height: 4px;
+      border-radius: 2px;
+      background: #334155;
+      outline: none;
+    }
+    #radiusSlider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: #3b82f6;
+      cursor: pointer;
+    }
+
+    /* ── Refresh button ── */
+    #refresh-btn {
+      position: fixed;
+      bottom: 24px; right: 16px;
+      background: #3b82f6;
+      border: none;
+      color: white;
+      width: 52px; height: 52px;
+      border-radius: 50%;
+      font-size: 22px;
+      cursor: pointer;
+      z-index: 1500;
+      box-shadow: 0 4px 20px rgba(59,130,246,0.5);
+      display: flex; align-items: center; justify-content: center;
+      transition: transform 0.2s;
+    }
+    #refresh-btn:active { transform: scale(0.92); }
+    #refresh-btn.spinning { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Loading overlay ── */
+    #loading {
+      position: fixed; inset: 0;
+      background: #0f172a;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 16px;
+      z-index: 9999;
+    }
+    #loading .loader {
+      width: 48px; height: 48px;
+      border: 4px solid #334155;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    #loading p { color: #94a3b8; font-size: 14px; text-align: center; padding: 0 32px; }
+
+    /* Plane SVG marker colors */
+    .plane-marker { cursor: pointer; }
+
+    /* Leaflet popup */
+    .leaflet-popup-content-wrapper {
+      background: #1e293b;
+      color: #e2e8f0;
+      border: 1px solid #334155;
+      border-radius: 10px;
+    }
+    .leaflet-popup-tip { background: #1e293b; }
+    .leaflet-popup-content { margin: 10px 14px; font-size: 13px; line-height: 1.7; }
+    .leaflet-popup-content b { color: #60a5fa; }
+  </style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="loader"></div>
+  <p id="loading-msg">Hämtar din position via GPS…</p>
+</div>
+
+<header>
+  <h1><span class="icon">✈</span> Flygradar</h1>
+  <span class="status-pill warn" id="status-pill">Väntar…</span>
+</header>
+
+<div id="map"></div>
+
+<div id="stats">
+  <div class="stat-chip">Flygplan: <b id="count">–</b></div>
+  <div class="stat-chip">Uppdaterad: <b id="updated">–</b></div>
+</div>
+
+<div id="radius-ctrl">
+  <label>Radie: <b id="radius-val">100</b> km</label>
+  <input type="range" id="radiusSlider" min="25" max="300" value="100" step="25" />
+</div>
+
+<button id="refresh-btn" title="Uppdatera">↻</button>
+
+<!-- Bottom sheet -->
+<div id="panel">
+  <div id="panel-handle"></div>
+  <button id="panel-close">✕</button>
+  <div class="panel-title" id="panel-callsign">–</div>
+  <div class="panel-grid" id="panel-grid"></div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ── State ── */
+  let map, userMarker, radiusCircle;
+  let userPos = null;
+  let planeMarkers = {};
+  let autoRefreshTimer = null;
+  const AUTO_REFRESH_SEC = 30;
+  let radiusKm = 100;
+
+  /* ── Helpers ── */
+  const $ = id => document.getElementById(id);
+  const statusPill = $('status-pill');
+
+  function setStatus(text, cls) {
+    statusPill.textContent = text;
+    statusPill.className = 'status-pill ' + cls;
+  }
+
+  function fmt(val, unit = '', decimals = 0) {
+    if (val == null || val === '') return '–';
+    return (typeof val === 'number' ? val.toFixed(decimals) : val) + (unit ? ' ' + unit : '');
+  }
+
+  function fmtTime(ts) {
+    if (!ts) return '–';
+    return new Date(ts * 1000).toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  function degToCompass(deg) {
+    if (deg == null) return '–';
+    const dirs = ['N','NNO','NO','ONO','O','OSO','SO','SSO','S','SSV','SV','VSV','V','VNV','NV','NNV'];
+    return dirs[Math.round(deg / 22.5) % 16];
+  }
+
+  /* ── Map init ── */
+  function initMap(lat, lon) {
+    map = L.map('map', {
+      center: [lat, lon],
+      zoom: 9,
+      zoomControl: true,
+      attributionControl: true,
+    });
+
+    // Dark map tiles (CartoDB Dark Matter)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '© <a href="https://openstreetmap.org">OSM</a> © <a href="https://carto.com">CARTO</a>',
+      maxZoom: 18,
+    }).addTo(map);
+
+    // User position marker
+    const userIcon = L.divIcon({
+      className: '',
+      html: `<div style="width:14px;height:14px;border-radius:50%;background:#3b82f6;border:3px solid white;box-shadow:0 0 0 4px rgba(59,130,246,0.3)"></div>`,
+      iconSize: [14, 14],
+      iconAnchor: [7, 7],
+    });
+    userMarker = L.marker([lat, lon], { icon: userIcon, zIndexOffset: 1000 })
+      .bindTooltip('Din position', { permanent: false, direction: 'top' })
+      .addTo(map);
+
+    radiusCircle = L.circle([lat, lon], {
+      radius: radiusKm * 1000,
+      color: '#3b82f6',
+      fillColor: '#3b82f6',
+      fillOpacity: 0.04,
+      weight: 1,
+      dashArray: '6 4',
+    }).addTo(map);
+  }
+
+  /* ── Plane icon ── */
+  function planeIcon(heading, onGround) {
+    const color = onGround ? '#94a3b8' : '#facc15';
+    const h = heading ?? 0;
+    return L.divIcon({
+      className: 'plane-marker',
+      html: `<svg width="28" height="28" viewBox="0 0 28 28" style="transform:rotate(${h}deg);transform-origin:center">
+        <polygon points="14,2 18,18 14,15 10,18" fill="${color}" stroke="#0f172a" stroke-width="1"/>
+        <polygon points="6,12 10,11 10,16 6,16" fill="${color}" stroke="#0f172a" stroke-width="0.5"/>
+        <polygon points="22,12 18,11 18,16 22,16" fill="${color}" stroke="#0f172a" stroke-width="0.5"/>
+        <polygon points="11,17 14,18.5 17,17 17,20 14,22 11,20" fill="${color}" stroke="#0f172a" stroke-width="0.5"/>
+      </svg>`,
+      iconSize: [28, 28],
+      iconAnchor: [14, 14],
+    });
+  }
+
+  /* ── Fetch flights ── */
+  async function fetchFlights() {
+    if (!userPos) return;
+    const { lat, lon } = userPos;
+    const dLat = radiusKm / 111;
+    const dLon = radiusKm / (111 * Math.cos(lat * Math.PI / 180));
+
+    const url = `https://opensky-network.org/api/states/all` +
+      `?lamin=${(lat - dLat).toFixed(4)}&lomin=${(lon - dLon).toFixed(4)}` +
+      `&lamax=${(lat + dLat).toFixed(4)}&lomax=${(lon + dLon).toFixed(4)}`;
+
+    $('refresh-btn').classList.add('spinning');
+    setStatus('Hämtar…', 'warn');
+
+    try {
+      const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      renderFlights(data.states || []);
+      const now = new Date().toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      $('updated').textContent = now;
+      setStatus('Live', 'ok');
+    } catch (e) {
+      console.error(e);
+      setStatus('Fel', 'error');
+    } finally {
+      $('refresh-btn').classList.remove('spinning');
+    }
+  }
+
+  /* ── Render flights on map ── */
+  function renderFlights(states) {
+    const seen = new Set();
+
+    states.forEach(s => {
+      const [icao24, callsign, country, , lastContact, lon, lat, baroAlt,
+             onGround, velocity, trueTrack, vertRate, , geoAlt, squawk] = s;
+
+      if (lat == null || lon == null) return;
+      seen.add(icao24);
+
+      const label = (callsign || icao24).trim() || icao24;
+      const altM = baroAlt ?? geoAlt;
+      const altFt = altM != null ? Math.round(altM * 3.28084) : null;
+      const speedKmh = velocity != null ? Math.round(velocity * 3.6) : null;
+      const speedKnots = velocity != null ? Math.round(velocity * 1.944) : null;
+
+      const popupHtml = `
+        <b>${label}</b><br>
+        Land: ${country || '–'}<br>
+        Höjd: ${altM != null ? Math.round(altM) + ' m (' + altFt + ' ft)' : '–'}<br>
+        Fart: ${speedKmh != null ? speedKmh + ' km/h (' + speedKnots + ' kn)' : '–'}<br>
+        Kurs: ${trueTrack != null ? Math.round(trueTrack) + '° ' + degToCompass(trueTrack) : '–'}<br>
+        Vertikal: ${vertRate != null ? (vertRate > 0 ? '▲ ' : '▼ ') + Math.abs(Math.round(vertRate)) + ' m/s' : '–'}<br>
+        Mark: ${onGround ? 'Ja' : 'Nej'}<br>
+        Squawk: ${squawk || '–'}
+      `;
+
+      if (planeMarkers[icao24]) {
+        planeMarkers[icao24].setLatLng([lat, lon]);
+        planeMarkers[icao24].setIcon(planeIcon(trueTrack, onGround));
+        planeMarkers[icao24].getPopup().setContent(popupHtml);
+        planeMarkers[icao24]._flightData = { label, country, altM, altFt, speedKmh, speedKnots, trueTrack, vertRate, onGround, squawk, lastContact };
+      } else {
+        const marker = L.marker([lat, lon], { icon: planeIcon(trueTrack, onGround) })
+          .bindPopup(popupHtml)
+          .addTo(map);
+
+        marker._flightData = { label, country, altM, altFt, speedKmh, speedKnots, trueTrack, vertRate, onGround, squawk, lastContact };
+
+        marker.on('click', () => openPanel(marker._flightData));
+        planeMarkers[icao24] = marker;
+      }
+    });
+
+    // Remove stale markers
+    Object.keys(planeMarkers).forEach(icao => {
+      if (!seen.has(icao)) {
+        planeMarkers[icao].remove();
+        delete planeMarkers[icao];
+      }
+    });
+
+    $('count').textContent = seen.size;
+  }
+
+  /* ── Bottom panel ── */
+  function openPanel(fd) {
+    $('panel-callsign').textContent = fd.label;
+    $('panel-grid').innerHTML = `
+      <div class="panel-item"><label>Land</label><value>${fd.country || '–'}</value></div>
+      <div class="panel-item"><label>Status</label><value>${fd.onGround ? '🛬 Mark' : '✈ Luftburen'}</value></div>
+      <div class="panel-item"><label>Höjd</label><value>${fd.altM != null ? Math.round(fd.altM) + ' m' : '–'}</value></div>
+      <div class="panel-item"><label>Höjd (ft)</label><value>${fd.altFt != null ? fd.altFt + ' ft' : '–'}</value></div>
+      <div class="panel-item"><label>Fart</label><value>${fd.speedKmh != null ? fd.speedKmh + ' km/h' : '–'}</value></div>
+      <div class="panel-item"><label>Fart (kn)</label><value>${fd.speedKnots != null ? fd.speedKnots + ' kn' : '–'}</value></div>
+      <div class="panel-item"><label>Kurs</label><value>${fd.trueTrack != null ? Math.round(fd.trueTrack) + '° ' + degToCompass(fd.trueTrack) : '–'}</value></div>
+      <div class="panel-item"><label>Vertikalhastighet</label><value>${fd.vertRate != null ? (fd.vertRate > 0 ? '▲ ' : '▼ ') + Math.abs(Math.round(fd.vertRate)) + ' m/s' : '–'}</value></div>
+      <div class="panel-item"><label>Squawk</label><value>${fd.squawk || '–'}</value></div>
+      <div class="panel-item"><label>Kontakt</label><value>${fmtTime(fd.lastContact)}</value></div>
+    `;
+    $('panel').classList.add('open');
+  }
+
+  $('panel-close').addEventListener('click', () => $('panel').classList.remove('open'));
+
+  /* ── Radius slider ── */
+  $('radiusSlider').addEventListener('input', e => {
+    radiusKm = parseInt(e.target.value);
+    $('radius-val').textContent = radiusKm;
+    if (radiusCircle) radiusCircle.setRadius(radiusKm * 1000);
+  });
+  $('radiusSlider').addEventListener('change', () => {
+    fetchFlights();
+    resetAutoRefresh();
+  });
+
+  /* ── Manual refresh ── */
+  $('refresh-btn').addEventListener('click', () => {
+    fetchFlights();
+    resetAutoRefresh();
+  });
+
+  /* ── Auto refresh ── */
+  function resetAutoRefresh() {
+    clearInterval(autoRefreshTimer);
+    autoRefreshTimer = setInterval(fetchFlights, AUTO_REFRESH_SEC * 1000);
+  }
+
+  /* ── GPS ── */
+  function onGotPosition(pos) {
+    const lat = pos.coords.latitude;
+    const lon = pos.coords.longitude;
+    userPos = { lat, lon };
+
+    $('loading').style.display = 'none';
+
+    if (!map) {
+      initMap(lat, lon);
+    } else {
+      userMarker.setLatLng([lat, lon]);
+      if (radiusCircle) radiusCircle.setLatLng([lat, lon]);
+    }
+
+    fetchFlights();
+    resetAutoRefresh();
+  }
+
+  function onGeoError(err) {
+    $('loading-msg').textContent = 'Kunde inte hämta GPS-position. Kontrollera att platsbehörighet är tillåten i webbläsaren.';
+    setStatus('Ingen GPS', 'error');
+    console.error(err);
+  }
+
+  // Start
+  if (!navigator.geolocation) {
+    $('loading-msg').textContent = 'Din webbläsare stöder inte geolokalisering.';
+  } else {
+    $('loading-msg').textContent = 'Hämtar din position via GPS…';
+    navigator.geolocation.getCurrentPosition(onGotPosition, onGeoError, {
+      enableHighAccuracy: true,
+      timeout: 20000,
+      maximumAge: 60000,
+    });
+
+    // Watch position updates
+    navigator.geolocation.watchPosition(pos => {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      userPos = { lat, lon };
+      if (userMarker) userMarker.setLatLng([lat, lon]);
+      if (radiusCircle) radiusCircle.setLatLng([lat, lon]);
+    }, () => {}, { enableHighAccuracy: true });
+  }
+
+})();
+</script>
+</body>
+</html>
